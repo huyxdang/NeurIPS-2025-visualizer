@@ -29,7 +29,7 @@ class PipelineRunner:
         }
         
         self.files = {
-            'input_json': self.base_dir / 'neurips_2025_papers_full.json',
+            'input_json': self.base_dir / 'neurips_2025_papers.json',
             'parquet': self.base_dir / 'neurips_2025_papers_full.parquet',
             'embedded': self.base_dir / 'neurips_2025_papers_with_embeddings.parquet',
             'umap': self.base_dir / 'neurips_2025_papers_with_umap.parquet',

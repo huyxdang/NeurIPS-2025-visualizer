@@ -40,7 +40,7 @@ pip install -r requirements_parquet.txt
 echo "OPENAI_API_KEY=your-key-here" > .env
 
 # Run complete pipeline
-python pipeline.py --all
+python main.py --all
 ```
 
 ### Option 2: Step by Step
