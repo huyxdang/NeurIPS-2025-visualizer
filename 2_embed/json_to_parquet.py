@@ -8,7 +8,7 @@ import pandas as pd
 from pathlib import Path
 
 # File paths
-INPUT_JSON = Path("neurips_2025_papers_full.json")
+INPUT_JSON = Path("neurips_2025_papers.json")
 OUTPUT_PARQUET = Path("neurips_2025_papers_full.parquet")
 
 print("="*70)
