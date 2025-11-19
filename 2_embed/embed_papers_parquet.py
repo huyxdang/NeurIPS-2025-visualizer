@@ -1,174 +1,219 @@
 """
-Embed papers using Google Embedding Gemma 300M (local model)
-Works with Parquet format for better performance
-
-Features:
-- Local inference (no API calls, no quotas!)
-- Batch processing for efficiency
-- Resume capability: Can continue from where it left off
-- Parquet format: Efficient storage and loading
-- Progress saving: Saves progress incrementally to Parquet
+Modal deployment for Embedding Gemma 300M
+Fast GPU-based embedding generation in the cloud
 """
 
-import time
+import modal
 from pathlib import Path
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
-from gemma_inference import get_embedding_model
 
-# Configuration
-INPUT_FILE = Path("neurips_2025_papers_full.parquet")
-OUTPUT_FILE = Path("neurips_2025_papers_with_embeddings.parquet")
-PROGRESS_FILE = Path("embedding_progress.parquet")
-BATCH_SIZE = 500  # Process 32 papers at once
-SAVE_INTERVAL = 500  # Save progress every 100 papers (since batching is fast)
+# Create Modal app
+app = modal.App("neurips-embedding-gemma")
 
-def load_progress():
-    """Load existing progress if available"""
-    if PROGRESS_FILE.exists():
-        print(f"📂 Found existing progress file: {PROGRESS_FILE}")
-        df = pd.read_parquet(PROGRESS_FILE)
-        print(f"   Loaded {len(df)} previously processed papers")
-        return df
-    return None
-
-def save_progress(df):
-    """Save progress to Parquet"""
-    df.to_parquet(PROGRESS_FILE, engine='pyarrow', compression='snappy', index=False)
-
-print("="*70)
-print("NeurIPS 2025 Papers - Embedding Generation (Local Model)")
-print("="*70)
-
-# Load embedding model
-print("\n🤖 Loading Embedding Gemma 300M model...")
-embedding_model = get_embedding_model(batch_size=BATCH_SIZE)
-embedding_dim = embedding_model.get_embedding_dim()
-print(f"✅ Model ready! Embedding dimension: {embedding_dim}")
-
-# Load input data
-print(f"\n📖 Loading papers from {INPUT_FILE}...")
-df = pd.read_parquet(INPUT_FILE)
-print(f"✅ Loaded {len(df)} papers")
-
-# Load progress if exists
-progress_df = load_progress()
-
-if progress_df is not None:
-    # Merge with existing data to continue from where we left off
-    processed_ids = set(progress_df[progress_df['embedding'].notna()]['paper_id'].tolist())
-    print(f"📊 Progress: {len(processed_ids)}/{len(df)} papers already processed")
-    
-    # Start with progress data
-    df = df.merge(
-        progress_df[['paper_id', 'embedding']], 
-        on='paper_id', 
-        how='left',
-        suffixes=('', '_progress')
+# Define the image with all dependencies
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "sentence-transformers",
+        "torch",
+        "pandas",
+        "pyarrow",
+        "tqdm",
+        "numpy",
     )
-    
-    # Use progress embeddings where available
-    if 'embedding_progress' in df.columns:
-        df['embedding'] = df['embedding_progress'].combine_first(df.get('embedding'))
-        df = df.drop(columns=['embedding_progress'])
-else:
-    print("🆕 Starting fresh (no previous progress found)")
-    df['embedding'] = None
-    processed_ids = set()
+    .run_commands(
+        "pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview"
+    )
+)
 
-# Generate embeddings
-print("\n🚀 Generating embeddings...")
-print(f"   Batch size: {BATCH_SIZE}")
-print(f"   Estimated time: ~{len(df) * 0.05 / 60:.1f} minutes (much faster than API!)")
+# Create persistent volume for storing data
+volume = modal.Volume.from_name("neurips-papers-vol", create_if_missing=True)
 
-errors = []
-processed_count = len(processed_ids)
+# HuggingFace secret for authentication
+secrets = modal.Secret.from_name("huggingface-secret")
 
-try:
-    # Filter to only papers without embeddings
-    mask_needs_embedding = df['embedding'].isna()
-    indices_to_process = df[mask_needs_embedding].index.tolist()
+
+@app.cls(
+    image=image,
+    gpu="A10G",  # Free tier GPU
+    secrets=[secrets],
+    volumes={"/data": volume},
+    timeout=3600,  # 1 hour timeout
+)
+class EmbeddingGenerator:
+    """Modal class for generating embeddings"""
     
-    print(f"📝 {len(indices_to_process)} papers need embeddings\n")
+    @modal.enter()
+    def load_model(self):
+        """Load model when container starts"""
+        import torch
+        from sentence_transformers import SentenceTransformer
+        from huggingface_hub import login
+        import os
+        
+        # Login to HuggingFace
+        hf_token = os.environ.get("HF_TOKEN")
+        if hf_token:
+            login(token=hf_token)
+        
+        print("Loading Embedding Gemma 300M model...")
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = SentenceTransformer("google/embeddinggemma-300M").to(device=self.device)
+        
+        print(f"✅ Model loaded on {self.device}")
+        print(f"   Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
     
-    # Process in batches
-    for batch_start in tqdm(range(0, len(indices_to_process), BATCH_SIZE), 
-                           desc="Processing batches"):
-        batch_indices = indices_to_process[batch_start:batch_start + BATCH_SIZE]
+    @modal.method()
+    def embed_batch(self, texts: list[str]) -> list:
+        """
+        Embed a batch of texts
         
-        # Collect abstracts for this batch
-        batch_abstracts = []
-        valid_batch_indices = []
-        
-        for idx in batch_indices:
-            abstract = df.at[idx, 'abstract']
-            if abstract and abstract != "N/A" and pd.notna(abstract):
-                batch_abstracts.append(abstract)
-                valid_batch_indices.append(idx)
-        
-        if not batch_abstracts:
-            continue
-        
-        try:
-            # Generate embeddings for the batch
-            batch_embeddings = embedding_model.encode(batch_abstracts, show_progress=False)
+        Args:
+            texts: List of text strings
             
-            # Assign embeddings to dataframe
-            for idx, embedding in zip(valid_batch_indices, batch_embeddings):
-                df.at[idx, 'embedding'] = embedding
-                processed_count += 1
+        Returns:
+            List of embeddings as lists (JSON serializable)
+        """
+        embeddings = self.model.encode(
+            texts,
+            batch_size=32,
+            show_progress_bar=False,
+            convert_to_numpy=True
+        )
+        return embeddings.tolist()
+    
+    @modal.method()
+    def process_parquet(self, input_path: str = "/data/neurips_2025_papers_full.parquet"):
+        """
+        Process entire parquet file and generate embeddings
+        
+        Args:
+            input_path: Path to input parquet file in volume
             
-            # Save progress periodically
-            if processed_count % SAVE_INTERVAL == 0:
-                save_progress(df)
+        Returns:
+            Path to output parquet file
+        """
+        import pandas as pd
+        import numpy as np
+        from tqdm import tqdm
+        
+        print(f"📖 Loading papers from {input_path}...")
+        df = pd.read_parquet(input_path)
+        print(f"✅ Loaded {len(df)} papers")
+        
+        # Initialize embeddings column
+        df['embedding'] = None
+        
+        # Process in batches
+        batch_size = 64  # Larger batches on GPU
+        print(f"\n🚀 Generating embeddings (batch_size={batch_size})...")
+        
+        for i in tqdm(range(0, len(df), batch_size), desc="Processing batches"):
+            batch_df = df.iloc[i:i+batch_size]
+            abstracts = batch_df['abstract'].tolist()
+            
+            # Filter valid abstracts
+            valid_abstracts = [
+                abstract for abstract in abstracts 
+                if abstract and abstract != "N/A" and pd.notna(abstract)
+            ]
+            
+            if valid_abstracts:
+                # Generate embeddings
+                embeddings = self.model.encode(
+                    valid_abstracts,
+                    batch_size=32,
+                    show_progress_bar=False,
+                    convert_to_numpy=True
+                )
                 
-        except Exception as e:
-            error_msg = str(e)
-            print(f"\n❌ Error processing batch starting at {batch_start}: {error_msg}")
-            for idx in valid_batch_indices:
-                errors.append({
-                    "index": idx, 
-                    "paper_id": df.at[idx, 'paper_id'], 
-                    "error": error_msg
-                })
-            continue
+                # Assign back to dataframe
+                valid_idx = 0
+                for j, abstract in enumerate(abstracts):
+                    if abstract and abstract != "N/A" and pd.notna(abstract):
+                        df.at[i+j, 'embedding'] = embeddings[valid_idx]
+                        valid_idx += 1
+        
+        # Save output
+        output_path = "/data/neurips_2025_papers_with_embeddings.parquet"
+        print(f"\n💾 Saving to {output_path}...")
+        df.to_parquet(output_path, engine='pyarrow', compression='snappy', index=False)
+        
+        embeddings_count = df['embedding'].notna().sum()
+        print(f"✅ Generated {embeddings_count} embeddings")
+        
+        return output_path
+
+
+@app.local_entrypoint()
+def main(
+    input_file: str = "neurips_2025_papers_full.parquet",
+    output_file: str = "neurips_2025_papers_with_embeddings.parquet"
+):
+    """
+    Main entrypoint for running embedding generation
     
-    # Final save
-    save_progress(df)
+    Usage:
+        modal run modal_embedding_gemma.py --input-file path/to/input.parquet
+    """
+    from pathlib import Path
     
-except KeyboardInterrupt:
-    print("\n\n⚠️  Interrupted by user. Saving progress...")
-    save_progress(df)
-    print(f"✅ Progress saved: {processed_count}/{len(df)} papers")
-    exit(0)
+    print("="*70)
+    print("NeurIPS 2025 - Modal Embedding Generation")
+    print("="*70)
+    
+    # Upload input file to volume
+    local_input = Path(input_file)
+    if not local_input.exists():
+        print(f"❌ Input file not found: {input_file}")
+        return
+    
+    print(f"\n📤 Uploading {input_file} to Modal volume...")
+    volume.reload()
+    
+    # Copy file to volume
+    import pandas as pd
+    df = pd.read_parquet(local_input)
+    remote_path = f"/data/{local_input.name}"
+    
+    # We'll process it directly in Modal
+    print(f"✅ File ready ({len(df)} papers)")
+    
+    # Create generator and process
+    print(f"\n🚀 Starting embedding generation on Modal GPU...")
+    generator = EmbeddingGenerator()
+    
+    # Upload the dataframe
+    print("📤 Uploading data to Modal...")
+    with volume.batch_upload() as batch:
+        df.to_parquet("/tmp/input.parquet")
+        batch.put_file("/tmp/input.parquet", remote_path)
+    
+    # Process on Modal
+    output_path = generator.process_parquet.remote(remote_path)
+    print(f"✅ Processing complete: {output_path}")
+    
+    # Download result
+    print(f"\n📥 Downloading result to {output_file}...")
+    volume.reload()
+    
+    with open(output_file, "wb") as f:
+        for chunk in volume.read_file(output_path):
+            f.write(chunk)
+    
+    print(f"✅ Saved to {output_file}")
+    
+    # Verify
+    df_output = pd.read_parquet(output_file)
+    embeddings_count = df_output['embedding'].notna().sum()
+    
+    print("\n" + "="*70)
+    print("✅ Complete!")
+    print("="*70)
+    print(f"Total papers: {len(df_output)}")
+    print(f"With embeddings: {embeddings_count}")
+    print(f"Output: {output_file}")
 
-# Count successful embeddings
-embeddings_count = df['embedding'].notna().sum()
-print(f"\n✅ Generated {embeddings_count} embeddings")
 
-# Save final output
-print(f"\n💾 Saving final output to {OUTPUT_FILE}...")
-df.to_parquet(OUTPUT_FILE, engine='pyarrow', compression='snappy', index=False)
-
-print(f"✅ Saved {len(df)} papers with embeddings to {OUTPUT_FILE}")
-
-# Clean up progress file if fully complete
-if PROGRESS_FILE.exists() and embeddings_count == len(df):
-    PROGRESS_FILE.unlink()
-    print("✅ Cleaned up progress file (all papers processed)")
-
-if errors:
-    print(f"\n⚠️  {len(errors)} errors encountered")
-    print("First few errors:")
-    for error in errors[:5]:
-        print(f"  - Paper {error['paper_id']}: {error['error']}")
-
-print("\n" + "="*70)
-print("✅ Embedding generation complete!")
-print("="*70)
-print(f"\n📊 Statistics:")
-print(f"   Total papers: {len(df)}")
-print(f"   With embeddings: {embeddings_count}")
-print(f"   Embedding dimension: {embedding_dim}")
-print(f"   Model: Embedding Gemma 300M (local)")
+if __name__ == "__main__":
+    # For testing locally
+    pass
