@@ -104,10 +104,15 @@ def inspect_parquet(file_path):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python inspect_parquet.py <file.parquet>")
-        print("\nAvailable files:")
-        for f in Path(".").glob("*.parquet"):
-            print(f"  - {f.name}")
+        print("\nAvailable files in data/ directory:")
+        data_dir = Path("data")
+        if data_dir.exists():
+            for f in data_dir.glob("*.parquet"):
+                print(f"  - data/{f.name}")
         sys.exit(1)
     
     file_path = sys.argv[1]
+    # If no directory specified, default to data/
+    if "/" not in file_path and "\\" not in file_path:
+        file_path = str(Path("data") / file_path)
     inspect_parquet(file_path)

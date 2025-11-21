@@ -85,6 +85,10 @@ Thumbs.db
 
 # Project-specific
 # Scraped data files (uncomment if you don't want to track data files)
+1_data/data
+2_embed/data
+3_features/data
+4_cluster/data  
 # *.json
 # *.csv
 # !requirements.txt

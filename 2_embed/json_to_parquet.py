@@ -8,8 +8,9 @@ import pandas as pd
 from pathlib import Path
 
 # File paths
-INPUT_JSON = Path("neurips_2025_papers.json")
-OUTPUT_PARQUET = Path("neurips_2025_papers_full.parquet")
+DATA_DIR = Path("data")
+INPUT_JSON = DATA_DIR / "neurips_2025_papers_full.json"
+OUTPUT_PARQUET = DATA_DIR / "neurips_2025_papers_full.parquet"
 
 print("="*70)
 print("Converting JSON to Parquet")

@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 
 # Load papers with UMAP coordinates
-input_file = Path(__file__).parent / "neurips_2025_papers_with_umap.json"
+input_file = Path(__file__).parent / "data" / "neurips_2025_papers_with_umap.json"
 
 print(f"Loading data from {input_file}...")
 with open(input_file, "r", encoding="utf-8") as f:
