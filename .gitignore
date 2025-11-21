@@ -109,3 +109,4 @@ logs/
 tmp/
 temp/
 
+.env
