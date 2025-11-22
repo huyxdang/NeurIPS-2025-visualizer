@@ -26,4 +26,7 @@ accelerate>=0.25.0
 
 modal>=0.25.0
 
-matplotlib>=3.7.0
+# Visualization
+datamapplot>=0.1.0
+
+argparse>=1.0.0
