@@ -1,0 +1,74 @@
+ /* frontend/src/App.css */
+@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&display=swap');
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: 'IM Fell English', serif; /* The Pirate Font */
+  background-color: #f4e4bc;
+}
+
+.pirate-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.map-wrapper {
+  flex-grow: 1;
+  height: 100%;
+  cursor: grab;
+}
+
+/* The Sidebar "Logbook" */
+.captains-log {
+  width: 400px;
+  background-color: #e8dcb5; /* Parchment color */
+  border-left: 5px solid #5d4037;
+  padding: 20px;
+  box-shadow: -5px 0 15px rgba(0,0,0,0.3);
+  overflow-y: auto;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  transform: translateX(100%); /* Hidden by default */
+  transition: transform 0.3s ease-in-out;
+  z-index: 10;
+}
+
+.captains-log.open {
+  transform: translateX(0); /* Slide in */
+}
+
+.captains-log h2 {
+  color: #3e2723;
+  border-bottom: 2px solid #8d6e63;
+  padding-bottom: 10px;
+}
+
+.cluster-tag {
+  background: #8d6e63;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 15px;
+  display: inline-block;
+  font-size: 0.9rem;
+  margin-bottom: 15px;
+}
+
+.read-btn {
+  display: block;
+  text-align: center;
+  background: #bf360c;
+  color: white;
+  text-decoration: none;
+  padding: 10px;
+  margin-top: 20px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.read-btn:hover {
+  background: #d84315;
+}
