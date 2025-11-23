@@ -30,3 +30,11 @@ modal>=0.25.0
 datamapplot>=0.1.0
 
 argparse>=1.0.0
+
+hdbscan>=0.8.35
+
+keybert>=0.6.0
+
+scikit-learn>=1.3.0
+
+matplotlib>=3.7.0
