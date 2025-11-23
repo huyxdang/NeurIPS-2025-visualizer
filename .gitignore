@@ -88,15 +88,13 @@ Thumbs.db
 1_data/data
 2_embed/data
 3_features/data
-4_centroid/data
-5_cluster/data
-6_naming/data
-7_frontend/data
+4_cluster/data
+5_naming/data
+6_frontend/data
 
 # *.json
 # *.csv
-# !requirements.txt
-2_embed/data/
+# !requirements.txt 
 
 # Test outputs
 test_output*
